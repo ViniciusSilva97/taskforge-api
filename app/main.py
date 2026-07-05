@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routers.task_router import router as task_router
 
 app = FastAPI (
     title = "TaskForge API",
@@ -7,9 +8,11 @@ app = FastAPI (
     description = "API para gerenciamento de tarefas com fluxo de revisão"
 )
 
+app.include_router(task_router)
+
 @app.get("/")
 async def root():
-    return{
+    return {
         "message": "Welcome to TaskForge API",
-        "status":"Runing",
+        "status":"running",
     }
