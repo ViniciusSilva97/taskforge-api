@@ -2,12 +2,15 @@ import unittest
 
 from fastapi.testclient import TestClient
 
+from app.api.routers.task_router import task_service
 from app.main import app
 
 
 class TaskApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(app)
+        task_service._tasks.clear()
+        task_service._next_id = 1
 
     def test_root_reports_running_api(self) -> None:
         response = self.client.get("/")
@@ -15,7 +18,7 @@ class TaskApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "running")
 
-    def test_create_and_retrieve_task(self) -> None:
+    def test_create_list_and_retrieve_task(self) -> None:
         create_response = self.client.post(
             "/tasks/",
             json={
@@ -28,6 +31,10 @@ class TaskApiTests(unittest.TestCase):
         created_task = create_response.json()
         self.assertEqual(created_task["title"], "Revisar fluxo de tarefas")
         self.assertEqual(created_task["status"], "CREATED")
+
+        list_response = self.client.get("/tasks/")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.json(), [created_task])
 
         get_response = self.client.get(f"/tasks/{created_task['id']}")
         self.assertEqual(get_response.status_code, 200)
