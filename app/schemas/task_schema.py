@@ -1,30 +1,8 @@
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-class TaskStatus(StrEnum):
-    ASSIGNED = "ASSIGNED"
-    IN_PROGRESS = "IN_PROGRESS"
-    IN_REVIEW = "IN_REVIEW"
-    CHANGES_REQUESTED = "CHANGES_REQUESTED"
-    APPROVED = "APPROVED"
-
-
-class TaskEventType(StrEnum):
-    TASK_CREATED = "TASK_CREATED"
-    TASK_STARTED = "TASK_STARTED"
-    TASK_SUBMITTED = "TASK_SUBMITTED"
-    CHANGES_REQUESTED = "CHANGES_REQUESTED"
-    TASK_APPROVED = "TASK_APPROVED"
-
-
-class NotificationType(StrEnum):
-    TASK_ASSIGNED = "TASK_ASSIGNED"
-    TASK_SUBMITTED = "TASK_SUBMITTED"
-    CHANGES_REQUESTED = "CHANGES_REQUESTED"
-    TASK_APPROVED = "TASK_APPROVED"
+from app.core.enums import NotificationType, TaskEventType, TaskStatus
 
 
 class TaskCreate(BaseModel):
@@ -46,11 +24,7 @@ class TaskCreate(BaseModel):
     def normalize_assignees(cls, value: list[int]) -> list[int]:
         if any(user_id <= 0 for user_id in value):
             raise ValueError("Todos os destinatários devem possuir IDs positivos.")
-
-        unique_ids = list(dict.fromkeys(value))
-        if not unique_ids:
-            raise ValueError("A tarefa deve possuir pelo menos um destinatário.")
-        return unique_ids
+        return list(dict.fromkeys(value))
 
 
 class TaskActionRequest(BaseModel):
@@ -74,17 +48,19 @@ class TaskChangesRequest(TaskActionRequest):
 
 
 class TaskResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     title: str
     description: str | None
     requester_id: int
     assignee_ids: list[int]
     status: TaskStatus
+    created_at: datetime
+    updated_at: datetime
 
 
 class TaskHistoryEntry(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     task_id: int
     actor_id: int
@@ -94,10 +70,12 @@ class TaskHistoryEntry(BaseModel):
 
 
 class NotificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     user_id: int
     task_id: int
     type: NotificationType
     message: str
-    is_read: bool = False
+    is_read: bool
     created_at: datetime

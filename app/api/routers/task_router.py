@@ -1,5 +1,9 @@
-from fastapi import APIRouter, HTTPException, status
+from collections.abc import Callable
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
 from app.schemas.task_schema import (
     NotificationResponse,
     TaskActionRequest,
@@ -15,103 +19,124 @@ from app.services.task_service import (
     TaskPermissionError,
     TaskService,
 )
+from app.services.user_service import UserNotFoundError
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
-task_service = TaskService()
 
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
-async def create_task(task_data: TaskCreate) -> TaskResponse:
-    return task_service.create_task(task_data)
+def create_task(payload: TaskCreate, db: Session = Depends(get_db)) -> TaskResponse:
+    try:
+        return TaskService(db).create_task(payload)
+    except UserNotFoundError as error:
+        raise _http_exception(error) from error
 
 
 @router.get("/", response_model=list[TaskResponse])
-async def list_tasks() -> list[TaskResponse]:
-    return task_service.list_tasks()
+def list_tasks(db: Session = Depends(get_db)) -> list[TaskResponse]:
+    return TaskService(db).list_tasks()
 
 
 @router.get(
     "/users/{user_id}/notifications",
     response_model=list[NotificationResponse],
 )
-async def list_user_notifications(user_id: int) -> list[NotificationResponse]:
-    return task_service.list_notifications(user_id)
+def list_user_notifications(
+    user_id: int,
+    db: Session = Depends(get_db),
+) -> list[NotificationResponse]:
+    try:
+        return TaskService(db).list_notifications(user_id)
+    except UserNotFoundError as error:
+        raise _http_exception(error) from error
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: int) -> TaskResponse:
+def get_task(task_id: int, db: Session = Depends(get_db)) -> TaskResponse:
     try:
-        return task_service.get_task(task_id)
+        return TaskService(db).get_task(task_id)
     except TaskNotFoundError as error:
         raise _http_exception(error) from error
 
 
 @router.get("/{task_id}/history", response_model=list[TaskHistoryEntry])
-async def list_task_history(task_id: int) -> list[TaskHistoryEntry]:
+def list_task_history(
+    task_id: int,
+    db: Session = Depends(get_db),
+) -> list[TaskHistoryEntry]:
     try:
-        return task_service.list_history(task_id)
+        return TaskService(db).list_history(task_id)
     except TaskNotFoundError as error:
         raise _http_exception(error) from error
 
 
 @router.post("/{task_id}/start", response_model=TaskResponse)
-async def start_task(task_id: int, payload: TaskActionRequest) -> TaskResponse:
-    try:
-        return task_service.start_task(task_id, payload.actor_id)
-    except (TaskNotFoundError, TaskPermissionError, InvalidTaskTransitionError) as error:
-        raise _http_exception(error) from error
+def start_task(
+    task_id: int,
+    payload: TaskActionRequest,
+    db: Session = Depends(get_db),
+) -> TaskResponse:
+    return _run_action(
+        lambda: TaskService(db).start_task(task_id, payload.actor_id)
+    )
 
 
 @router.post("/{task_id}/submit", response_model=TaskResponse)
-async def submit_task(task_id: int, payload: TaskActionRequest) -> TaskResponse:
-    try:
-        return task_service.submit_for_review(task_id, payload.actor_id)
-    except (TaskNotFoundError, TaskPermissionError, InvalidTaskTransitionError) as error:
-        raise _http_exception(error) from error
+def submit_task(
+    task_id: int,
+    payload: TaskActionRequest,
+    db: Session = Depends(get_db),
+) -> TaskResponse:
+    return _run_action(
+        lambda: TaskService(db).submit_for_review(task_id, payload.actor_id)
+    )
 
 
 @router.post("/{task_id}/request-changes", response_model=TaskResponse)
-async def request_task_changes(
+def request_task_changes(
     task_id: int,
     payload: TaskChangesRequest,
+    db: Session = Depends(get_db),
 ) -> TaskResponse:
-    try:
-        return task_service.request_changes(
+    return _run_action(
+        lambda: TaskService(db).request_changes(
             task_id=task_id,
             actor_id=payload.actor_id,
             comment=payload.comment,
         )
-    except (TaskNotFoundError, TaskPermissionError, InvalidTaskTransitionError) as error:
-        raise _http_exception(error) from error
+    )
 
 
 @router.post("/{task_id}/approve", response_model=TaskResponse)
-async def approve_task(
+def approve_task(
     task_id: int,
     payload: TaskReviewRequest,
+    db: Session = Depends(get_db),
 ) -> TaskResponse:
-    try:
-        return task_service.approve_task(
+    return _run_action(
+        lambda: TaskService(db).approve_task(
             task_id=task_id,
             actor_id=payload.actor_id,
             comment=payload.comment,
         )
-    except (TaskNotFoundError, TaskPermissionError, InvalidTaskTransitionError) as error:
+    )
+
+
+def _run_action(action: Callable[[], TaskResponse]) -> TaskResponse:
+    try:
+        return action()
+    except (
+        TaskNotFoundError,
+        UserNotFoundError,
+        TaskPermissionError,
+        InvalidTaskTransitionError,
+    ) as error:
         raise _http_exception(error) from error
 
 
 def _http_exception(error: Exception) -> HTTPException:
-    if isinstance(error, TaskNotFoundError):
-        return HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(error),
-        )
+    if isinstance(error, (TaskNotFoundError, UserNotFoundError)):
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
     if isinstance(error, TaskPermissionError):
-        return HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(error),
-        )
-    return HTTPException(
-        status_code=status.HTTP_409_CONFLICT,
-        detail=str(error),
-    )
+        return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error))
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
