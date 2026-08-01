@@ -1,9 +1,12 @@
 [project]
 name = "taskforge-api"
-version = "0.1.0"
-description = "API de gerenciamento de tarefas com fluxo de entrega e revisão."
+version = "0.2.0"
+description = "API de gerenciamento de tarefas com usuários, workflow e PostgreSQL."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "alembic>=1.18.0",
     "fastapi[standard]>=0.139.0",
+    "psycopg[binary]>=3.2.0",
+    "sqlalchemy>=2.0.0",
 ]
