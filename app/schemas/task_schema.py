@@ -8,7 +8,6 @@ from app.core.enums import NotificationType, TaskEventType, TaskStatus
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=500)
-    requester_id: int = Field(gt=0)
     assignee_ids: list[int] = Field(min_length=1)
 
     @field_validator("title")
@@ -27,15 +26,11 @@ class TaskCreate(BaseModel):
         return list(dict.fromkeys(value))
 
 
-class TaskActionRequest(BaseModel):
-    actor_id: int = Field(gt=0)
-
-
-class TaskReviewRequest(TaskActionRequest):
+class TaskReviewRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=1000)
 
 
-class TaskChangesRequest(TaskActionRequest):
+class TaskChangesRequest(BaseModel):
     comment: str = Field(min_length=1, max_length=1000)
 
     @field_validator("comment")

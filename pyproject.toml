@@ -1,12 +1,14 @@
 [project]
 name = "taskforge-api"
-version = "0.2.0"
-description = "API de gerenciamento de tarefas com usuários, workflow e PostgreSQL."
+version = "0.3.0"
+description = "API de gerenciamento de tarefas com autenticação JWT e PostgreSQL."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.0",
+    "argon2-cffi>=25.1.0",
     "fastapi[standard]>=0.139.0",
     "psycopg[binary]>=3.2.0",
+    "pyjwt>=2.13.0",
     "sqlalchemy>=2.0.0",
 ]

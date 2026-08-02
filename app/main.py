@@ -1,14 +1,16 @@
 from fastapi import FastAPI
 
+from app.api.routers.auth_router import router as auth_router
 from app.api.routers.task_router import router as task_router
 from app.api.routers.user_router import router as user_router
 
 app = FastAPI(
     title="TaskForge API",
-    version="0.2.0",
-    description="API de tarefas com usuários, workflow, histórico e persistência.",
+    version="0.3.0",
+    description="API de tarefas com autenticação JWT, workflow e persistência.",
 )
 
+app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(task_router)
 

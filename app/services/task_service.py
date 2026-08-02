@@ -32,10 +32,9 @@ class TaskService:
         self.tasks = TaskRepository(session)
         self.users = UserRepository(session)
 
-    def create_task(self, task_data: TaskCreate) -> TaskResponse:
-        requester = self._get_user(task_data.requester_id)
+    def create_task(self, task_data: TaskCreate, requester_id: int) -> TaskResponse:
+        requester = self._get_user(requester_id)
         assignees = [self._get_user(user_id) for user_id in task_data.assignee_ids]
-
         task = self.tasks.create(
             title=task_data.title,
             description=task_data.description,
@@ -57,11 +56,16 @@ class TaskService:
         self.session.commit()
         return self._to_response(task)
 
-    def list_tasks(self) -> list[TaskResponse]:
-        return [self._to_response(task) for task in self.tasks.list()]
+    def list_tasks(self, user_id: int) -> list[TaskResponse]:
+        return [
+            self._to_response(task)
+            for task in self.tasks.list_for_user(user_id)
+        ]
 
-    def get_task(self, task_id: int) -> TaskResponse:
-        return self._to_response(self._get_task(task_id))
+    def get_task(self, task_id: int, actor_id: int) -> TaskResponse:
+        task = self._get_task(task_id)
+        self._require_participant(task, actor_id)
+        return self._to_response(task)
 
     def start_task(self, task_id: int, actor_id: int) -> TaskResponse:
         task = self._get_task(task_id)
@@ -136,7 +140,6 @@ class TaskService:
         self._require_requester(task, actor_id)
         self._require_status(task, {TaskStatus.IN_REVIEW}, "aprovar")
         self.tasks.change_status(task, TaskStatus.APPROVED)
-
         description = "Tarefa revisada e aprovada."
         if comment and comment.strip():
             description = f"{description} Observação: {comment.strip()}"
@@ -155,15 +158,19 @@ class TaskService:
         self.session.commit()
         return self._to_response(task)
 
-    def list_history(self, task_id: int) -> list[TaskHistoryEntry]:
-        self._get_task(task_id)
+    def list_history(
+        self,
+        task_id: int,
+        actor_id: int,
+    ) -> list[TaskHistoryEntry]:
+        task = self._get_task(task_id)
+        self._require_participant(task, actor_id)
         return [
             TaskHistoryEntry.model_validate(event)
             for event in self.tasks.list_history(task_id)
         ]
 
     def list_notifications(self, user_id: int) -> list[NotificationResponse]:
-        self._get_user(user_id)
         return [
             NotificationResponse.model_validate(notification)
             for notification in self.tasks.list_notifications(user_id)
@@ -171,7 +178,7 @@ class TaskService:
 
     def _get_user(self, user_id: int) -> User:
         user = self.users.get(user_id)
-        if user is None:
+        if user is None or not user.is_active:
             raise UserNotFoundError(f"Usuário {user_id} não encontrado.")
         return user
 
@@ -196,6 +203,15 @@ class TaskService:
             updated_at=task.updated_at,
         )
 
+    def _require_participant(self, task: Task, actor_id: int) -> None:
+        if (
+            actor_id != task.requester_id
+            and actor_id not in self._assignee_ids(task)
+        ):
+            raise TaskPermissionError(
+                "Somente participantes da tarefa podem consultar este recurso."
+            )
+
     def _require_assignee(self, task: Task, actor_id: int) -> None:
         if actor_id not in self._assignee_ids(task):
             raise TaskPermissionError(
@@ -215,7 +231,9 @@ class TaskService:
         action: str,
     ) -> None:
         if task.status not in allowed_statuses:
-            allowed = ", ".join(sorted(status.value for status in allowed_statuses))
+            allowed = ", ".join(
+                sorted(status.value for status in allowed_statuses)
+            )
             raise InvalidTaskTransitionError(
                 f"Não é possível {action} uma tarefa no status {task.status.value}. "
                 f"Status permitidos: {allowed}."

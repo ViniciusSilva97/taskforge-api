@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.enums import NotificationType, TaskEventType, TaskStatus
@@ -39,8 +39,18 @@ class TaskRepository:
         )
         return self.session.scalar(statement)
 
-    def list(self) -> list[Task]:
-        statement = select(Task).options(selectinload(Task.assignees)).order_by(Task.id)
+    def list_for_user(self, user_id: int) -> list[Task]:
+        statement = (
+            select(Task)
+            .where(
+                or_(
+                    Task.requester_id == user_id,
+                    Task.assignees.any(User.id == user_id),
+                )
+            )
+            .options(selectinload(Task.assignees))
+            .order_by(Task.id)
+        )
         return list(self.session.scalars(statement))
 
     def change_status(self, task: Task, status: TaskStatus) -> None:

@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password
 from app.repositories.user_repository import UserRepository
 from app.schemas.user_schema import UserCreate, UserResponse
 
@@ -23,7 +24,11 @@ class UserService:
                 f"Já existe um usuário cadastrado com o e-mail {data.email}."
             )
 
-        user = self.repository.create(name=data.name, email=str(data.email))
+        user = self.repository.create(
+            name=data.name,
+            email=str(data.email),
+            password_hash=hash_password(data.password),
+        )
         self.session.commit()
         return UserResponse.model_validate(user)
 
