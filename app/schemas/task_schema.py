@@ -53,6 +53,13 @@ class TaskResponse(BaseModel):
     updated_at: datetime
 
 
+class TaskPage(BaseModel):
+    items: list[TaskResponse]
+    total: int
+    limit: int
+    offset: int
+
+
 class TaskHistoryEntry(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -74,3 +81,14 @@ class NotificationResponse(BaseModel):
     message: str
     is_read: bool
     created_at: datetime
+
+
+class NotificationPage(BaseModel):
+    items: list[NotificationResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class NotificationReadAllResponse(BaseModel):
+    updated_count: int
