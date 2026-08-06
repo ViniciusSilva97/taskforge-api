@@ -2,81 +2,86 @@
 
 ## Objetivo do projeto
 
-O TaskForge API é um sistema de tarefas inspirado em Issues e Pull Requests. O produto controla atribuição, execução, entrega, revisão, solicitação de ajustes, aprovação, notificações direcionadas e histórico de eventos.
+O TaskForge API é um sistema de tarefas inspirado em Issues e Pull Requests. A aplicação permite cadastro de usuários, autenticação, atribuição, execução, entrega, revisão, solicitação de ajustes, aprovação, notificações e histórico persistente.
 
 ## Papéis do projeto
 
 - Vinicius atua como analista, testador e responsável pelas decisões de negócio.
 - A IA atua como arquiteta e implementadora técnica, mantendo código, testes e documentação.
 
-## Stack aprovada
+## Stack atual
 
 - Python 3.14+
-- FastAPI e Pydantic
+- FastAPI
+- Pydantic
 - SQLAlchemy 2
 - PostgreSQL 17
 - Alembic
+- OAuth2 Password Bearer
+- JWT com PyJWT
+- Argon2 com argon2-cffi
+- Docker Compose
 - uv
-- Docker Compose para o banco local
-- unittest e FastAPI TestClient
 
-## Estado da versão 0.2
+## Estado da versão 0.3
 
-A aplicação deixa de usar armazenamento global em memória e passa a possuir persistência relacional.
+A versão 0.3 adiciona identidade autenticada ao domínio:
 
-Funcionalidades atuais:
+- cadastro público em `POST /users/`, agora com senha;
+- login em `POST /auth/token`, usando o e-mail no campo `username`;
+- usuário autenticado em `GET /auth/me`;
+- rotas protegidas por token Bearer;
+- solicitante obtido do token, sem `requester_id` no JSON de criação;
+- executor/revisor obtido do token, sem `actor_id` nos JSONs;
+- listagem de tarefas limitada às tarefas solicitadas ou recebidas pelo usuário;
+- consulta de tarefa e histórico restrita aos participantes;
+- notificações disponíveis em `GET /tasks/notifications/me`;
+- senha armazenada somente como hash Argon2;
+- JWT assinado, com expiração configurável.
 
-- cadastro, listagem e consulta de usuários;
-- e-mail de usuário único, normalizado em letras minúsculas;
-- criação de tarefa apenas com solicitante e destinatários existentes;
-- múltiplos destinatários sem duplicidade;
-- workflow `ASSIGNED → IN_PROGRESS → IN_REVIEW`;
-- aprovação ou solicitação de ajustes;
-- histórico persistido para cada transição;
-- notificações persistidas e direcionadas aos envolvidos;
-- PostgreSQL no ambiente local via Docker Compose;
-- migrations versionadas com Alembic;
-- testes isolados em SQLite em memória.
-
-## Arquitetura atual
+## Fluxo da tarefa
 
 ```text
-Router → Service → Repository → SQLAlchemy → Banco de dados
+ASSIGNED
+   ↓
+IN_PROGRESS
+   ↓
+IN_REVIEW
+   ├──→ APPROVED
+   └──→ CHANGES_REQUESTED → IN_PROGRESS
 ```
 
-- Router: recebe HTTP, resolve dependências e converte erros de domínio em status HTTP.
-- Schema: valida contratos de entrada e saída.
-- Service: aplica regras de negócio e controla transações.
-- Repository: concentra consultas e persistência.
-- Model: representa as tabelas e relacionamentos SQLAlchemy.
+## Regras de segurança preservadas
 
-## Regras de negócio preservadas
+1. A senha nunca aparece nos schemas de resposta.
+2. O backend não aceita identidade informada no payload para ações protegidas.
+3. Somente destinatários podem iniciar e entregar uma tarefa.
+4. Somente o solicitante pode aprovar ou pedir ajustes.
+5. Somente participantes podem consultar a tarefa e seu histórico.
+6. Cada usuário consulta somente as próprias notificações.
+7. Token ausente, inválido ou expirado retorna `401`.
+8. Usuário autenticado sem permissão retorna `403`.
+9. Toda transição válida continua gerando histórico e notificações na mesma transação.
 
-1. Toda tarefa possui um solicitante cadastrado.
-2. Toda tarefa possui pelo menos um destinatário cadastrado.
-3. E-mails de usuários são únicos sem diferenciar maiúsculas de minúsculas.
-4. Apenas destinatários podem iniciar ou entregar a tarefa.
-5. Apenas o solicitante pode pedir ajustes ou aprovar.
-6. A tarefa precisa estar em andamento antes de ser entregue.
-7. A tarefa precisa estar em revisão antes de ser aprovada ou devolvida.
-8. Solicitar ajustes exige uma observação não vazia.
-9. Na criação, somente os destinatários são notificados.
-10. Na entrega, somente o solicitante é notificado.
-11. Em ajustes ou aprovação, os destinatários são notificados.
-12. Toda transição válida gera histórico.
+## Migração de dados
 
-## Como preparar o ambiente local
+A migration `20260802_0002` adiciona `password_hash` aos usuários. Usuários criados na v0.2 recebem o valor `!unusable!`, preservando os registros, mas não conseguem autenticar. Como o projeto está em desenvolvimento, recomenda-se recriar esses usuários com senha após a migration ou limpar o volume de testes.
+
+## Variáveis de ambiente
+
+- `DATABASE_URL`
+- `JWT_SECRET_KEY` — deve possuir pelo menos 32 bytes e ser trocada fora do desenvolvimento;
+- `JWT_ALGORITHM` — padrão `HS256`;
+- `ACCESS_TOKEN_EXPIRE_MINUTES` — padrão `60`.
+
+## Como executar
 
 ```powershell
-git switch feat/users-postgres-v0.2.0
-git pull origin feat/users-postgres-v0.2.0
 uv sync
 docker compose up -d db
 uv run alembic upgrade head
 uv run fastapi dev app/main.py
 ```
-
-Swagger: `http://127.0.0.1:8000/docs`
 
 ## Como testar
 
@@ -84,17 +89,12 @@ Swagger: `http://127.0.0.1:8000/docs`
 uv run python -m unittest discover -s tests -v
 ```
 
-Resultado validado nesta etapa: 9 testes executados com sucesso.
-A migration também foi validada com upgrade e downgrade em banco SQLite temporário.
+Validação da entrega: 11 testes automatizados aprovados; migration validada com `upgrade head` e `downgrade base`.
 
-## Limitações conhecidas
+## Próximas entregas recomendadas
 
-- Ainda não existe autenticação; `actor_id` continua sendo enviado no payload.
-- Não existem senhas, papéis ou permissões globais de usuário.
-- Notificações ainda não possuem endpoint para marcação como lidas.
-- A API ainda roda localmente fora do Docker; somente o PostgreSQL foi containerizado nesta etapa.
-- O arquivo `uv.lock` deve ser atualizado pelo `uv sync` após a inclusão das novas dependências.
-
-## Próxima entrega recomendada
-
-Validar a v0.2 com PostgreSQL real. Depois, implementar autenticação e substituir `actor_id` enviado pelo cliente pela identidade do usuário autenticado.
+- refresh token e revogação de sessão;
+- redefinição segura de senha;
+- organizações/workspaces para isolamento entre empresas;
+- marcação de notificações como lidas;
+- paginação e filtros de tarefas.
