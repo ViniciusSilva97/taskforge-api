@@ -74,14 +74,21 @@ class TaskForgeApiTests(unittest.TestCase):
         token = response.json()["access_token"]
         return {"Authorization": f"Bearer {token}"}
 
-    def create_task(self) -> dict:
+    def create_task(
+        self,
+        *,
+        requester_headers: dict[str, str] | None = None,
+        assignee_ids: list[int] | None = None,
+        title: str = "Revisar fluxo de tarefas",
+    ) -> dict:
         response = self.client.post(
             "/tasks/",
-            headers=self.requester_headers,
+            headers=requester_headers or self.requester_headers,
             json={
-                "title": "  Revisar fluxo de tarefas  ",
+                "title": f"  {title}  ",
                 "description": "Validar a entrega autenticada.",
-                "assignee_ids": [
+                "assignee_ids": assignee_ids
+                or [
                     self.assignee["id"],
                     self.second_assignee["id"],
                     self.assignee["id"],
@@ -91,10 +98,10 @@ class TaskForgeApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
-    def test_root_reports_version_030(self) -> None:
+    def test_root_reports_version_040(self) -> None:
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["version"], "0.3.0")
+        self.assertEqual(response.json()["version"], "0.4.0")
 
     def test_login_and_current_user(self) -> None:
         response = self.client.get("/auth/me", headers=self.requester_headers)
@@ -133,16 +140,18 @@ class TaskForgeApiTests(unittest.TestCase):
             task["assignee_ids"],
             [self.assignee["id"], self.second_assignee["id"]],
         )
-        requester_tasks = self.client.get(
+        requester_page = self.client.get(
             "/tasks/",
             headers=self.requester_headers,
         ).json()
-        outsider_tasks = self.client.get(
+        outsider_page = self.client.get(
             "/tasks/",
             headers=self.outsider_headers,
         ).json()
-        self.assertEqual(len(requester_tasks), 1)
-        self.assertEqual(outsider_tasks, [])
+        self.assertEqual(requester_page["total"], 1)
+        self.assertEqual(len(requester_page["items"]), 1)
+        self.assertEqual(outsider_page["total"], 0)
+        self.assertEqual(outsider_page["items"], [])
 
     def test_task_requires_existing_assignees(self) -> None:
         response = self.client.post(
@@ -232,19 +241,135 @@ class TaskForgeApiTests(unittest.TestCase):
 
     def test_notifications_are_bound_to_authenticated_user(self) -> None:
         self.create_task()
-        requester_notifications = self.client.get(
+        requester_page = self.client.get(
             "/tasks/notifications/me",
             headers=self.requester_headers,
         ).json()
-        assignee_notifications = self.client.get(
+        assignee_page = self.client.get(
             "/tasks/notifications/me",
             headers=self.assignee_headers,
         ).json()
-        self.assertEqual(requester_notifications, [])
+        self.assertEqual(requester_page["items"], [])
+        self.assertEqual(requester_page["total"], 0)
         self.assertEqual(
-            assignee_notifications[0]["type"],
+            assignee_page["items"][0]["type"],
             "TASK_ASSIGNED",
         )
+
+    def test_task_filters_roles_status_and_pagination(self) -> None:
+        first = self.create_task(title="Tarefa solicitada 1")
+        second = self.create_task(
+            requester_headers=self.outsider_headers,
+            assignee_ids=[self.requester["id"]],
+            title="Tarefa recebida",
+        )
+        third = self.create_task(title="Tarefa solicitada 2")
+
+        self.client.post(
+            f"/tasks/{second['id']}/start",
+            headers=self.requester_headers,
+        )
+
+        requested = self.client.get(
+            "/tasks/?role=requested",
+            headers=self.requester_headers,
+        ).json()
+        assigned = self.client.get(
+            "/tasks/?role=assigned",
+            headers=self.requester_headers,
+        ).json()
+        in_progress = self.client.get(
+            "/tasks/?status=IN_PROGRESS",
+            headers=self.requester_headers,
+        ).json()
+        first_page = self.client.get(
+            "/tasks/?limit=2&offset=0",
+            headers=self.requester_headers,
+        ).json()
+        second_page = self.client.get(
+            "/tasks/?limit=2&offset=2",
+            headers=self.requester_headers,
+        ).json()
+
+        self.assertEqual(requested["total"], 2)
+        self.assertEqual(
+            {item["id"] for item in requested["items"]},
+            {first["id"], third["id"]},
+        )
+        self.assertEqual(assigned["total"], 1)
+        self.assertEqual(assigned["items"][0]["id"], second["id"])
+        self.assertEqual(in_progress["total"], 1)
+        self.assertEqual(in_progress["items"][0]["id"], second["id"])
+        self.assertEqual(first_page["total"], 3)
+        self.assertEqual(len(first_page["items"]), 2)
+        self.assertEqual(first_page["limit"], 2)
+        self.assertEqual(second_page["total"], 3)
+        self.assertEqual(len(second_page["items"]), 1)
+        self.assertEqual(second_page["offset"], 2)
+
+    def test_notification_read_lifecycle(self) -> None:
+        self.create_task()
+        unread_page = self.client.get(
+            "/tasks/notifications/me?unread_only=true",
+            headers=self.assignee_headers,
+        ).json()
+        notification_id = unread_page["items"][0]["id"]
+        self.assertEqual(unread_page["total"], 1)
+
+        marked = self.client.patch(
+            f"/tasks/notifications/{notification_id}/read",
+            headers=self.assignee_headers,
+        )
+        self.assertEqual(marked.status_code, 200)
+        self.assertTrue(marked.json()["is_read"])
+
+        unread_after = self.client.get(
+            "/tasks/notifications/me?unread_only=true",
+            headers=self.assignee_headers,
+        ).json()
+        all_after = self.client.get(
+            "/tasks/notifications/me",
+            headers=self.assignee_headers,
+        ).json()
+        self.assertEqual(unread_after["total"], 0)
+        self.assertEqual(all_after["total"], 1)
+        self.assertTrue(all_after["items"][0]["is_read"])
+
+    def test_user_cannot_mark_another_users_notification(self) -> None:
+        self.create_task()
+        assignee_page = self.client.get(
+            "/tasks/notifications/me",
+            headers=self.assignee_headers,
+        ).json()
+        notification_id = assignee_page["items"][0]["id"]
+
+        response = self.client.patch(
+            f"/tasks/notifications/{notification_id}/read",
+            headers=self.outsider_headers,
+        )
+        self.assertEqual(response.status_code, 404)
+
+    def test_mark_all_notifications_read_only_affects_current_user(self) -> None:
+        self.create_task(title="Primeira notificação")
+        self.create_task(title="Segunda notificação")
+
+        response = self.client.patch(
+            "/tasks/notifications/read-all",
+            headers=self.assignee_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["updated_count"], 2)
+
+        assignee_unread = self.client.get(
+            "/tasks/notifications/me?unread_only=true",
+            headers=self.assignee_headers,
+        ).json()
+        second_assignee_unread = self.client.get(
+            "/tasks/notifications/me?unread_only=true",
+            headers=self.second_assignee_headers,
+        ).json()
+        self.assertEqual(assignee_unread["total"], 0)
+        self.assertEqual(second_assignee_unread["total"], 2)
 
 
 if __name__ == "__main__":
