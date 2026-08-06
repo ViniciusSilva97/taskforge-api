@@ -9,6 +9,12 @@ class TaskStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
+class TaskRoleFilter(StrEnum):
+    ALL = "all"
+    REQUESTED = "requested"
+    ASSIGNED = "assigned"
+
+
 class TaskEventType(StrEnum):
     TASK_CREATED = "TASK_CREATED"
     TASK_STARTED = "TASK_STARTED"
