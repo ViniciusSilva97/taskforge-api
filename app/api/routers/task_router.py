@@ -1,21 +1,27 @@
 from collections.abc import Callable
+from typing import TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies.auth import get_current_user
 from app.core.database import get_db
+from app.core.enums import TaskRoleFilter, TaskStatus
 from app.models.user import User
 from app.schemas.task_schema import (
+    NotificationPage,
+    NotificationReadAllResponse,
     NotificationResponse,
     TaskChangesRequest,
     TaskCreate,
     TaskHistoryEntry,
+    TaskPage,
     TaskResponse,
     TaskReviewRequest,
 )
 from app.services.task_service import (
     InvalidTaskTransitionError,
+    NotificationNotFoundError,
     TaskNotFoundError,
     TaskPermissionError,
     TaskService,
@@ -23,6 +29,7 @@ from app.services.task_service import (
 from app.services.user_service import UserNotFoundError
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
+ResponseT = TypeVar("ResponseT")
 
 
 @router.post("/", response_model=TaskResponse, status_code=status.HTTP_201_CREATED)
@@ -37,20 +44,66 @@ def create_task(
         raise _http_exception(error) from error
 
 
-@router.get("/", response_model=list[TaskResponse])
+@router.get("/", response_model=TaskPage)
 def list_tasks(
+    status_filter: TaskStatus | None = Query(default=None, alias="status"),
+    role: TaskRoleFilter = Query(default=TaskRoleFilter.ALL),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[TaskResponse]:
-    return TaskService(db).list_tasks(current_user.id)
+) -> TaskPage:
+    return TaskService(db).list_tasks(
+        current_user.id,
+        status_filter=status_filter,
+        role=role,
+        limit=limit,
+        offset=offset,
+    )
 
 
-@router.get("/notifications/me", response_model=list[NotificationResponse])
+@router.get("/notifications/me", response_model=NotificationPage)
 def list_my_notifications(
+    unread_only: bool = Query(default=False),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> list[NotificationResponse]:
-    return TaskService(db).list_notifications(current_user.id)
+) -> NotificationPage:
+    return TaskService(db).list_notifications(
+        current_user.id,
+        unread_only=unread_only,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.patch(
+    "/notifications/read-all",
+    response_model=NotificationReadAllResponse,
+)
+def mark_all_notifications_read(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NotificationReadAllResponse:
+    return TaskService(db).mark_all_notifications_read(current_user.id)
+
+
+@router.patch(
+    "/notifications/{notification_id}/read",
+    response_model=NotificationResponse,
+)
+def mark_notification_read(
+    notification_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> NotificationResponse:
+    return _run_action(
+        lambda: TaskService(db).mark_notification_read(
+            notification_id,
+            current_user.id,
+        )
+    )
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
@@ -130,11 +183,12 @@ def approve_task(
     )
 
 
-def _run_action(action: Callable[[], TaskResponse]) -> TaskResponse:
+def _run_action(action: Callable[[], ResponseT]) -> ResponseT:
     try:
         return action()
     except (
         TaskNotFoundError,
+        NotificationNotFoundError,
         UserNotFoundError,
         TaskPermissionError,
         InvalidTaskTransitionError,
@@ -143,7 +197,10 @@ def _run_action(action: Callable[[], TaskResponse]) -> TaskResponse:
 
 
 def _http_exception(error: Exception) -> HTTPException:
-    if isinstance(error, (TaskNotFoundError, UserNotFoundError)):
+    if isinstance(
+        error,
+        (TaskNotFoundError, NotificationNotFoundError, UserNotFoundError),
+    ):
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(error),
