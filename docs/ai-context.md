@@ -23,21 +23,52 @@ O TaskForge API é um sistema de tarefas inspirado em Issues e Pull Requests. A 
 - Docker Compose
 - uv
 
-## Estado da versão 0.3
+## Estado da versão 0.4
 
-A versão 0.3 adiciona identidade autenticada ao domínio:
+A versão 0.4 melhora a consulta e o acompanhamento operacional:
 
-- cadastro público em `POST /users/`, agora com senha;
-- login em `POST /auth/token`, usando o e-mail no campo `username`;
-- usuário autenticado em `GET /auth/me`;
-- rotas protegidas por token Bearer;
-- solicitante obtido do token, sem `requester_id` no JSON de criação;
-- executor/revisor obtido do token, sem `actor_id` nos JSONs;
-- listagem de tarefas limitada às tarefas solicitadas ou recebidas pelo usuário;
-- consulta de tarefa e histórico restrita aos participantes;
-- notificações disponíveis em `GET /tasks/notifications/me`;
-- senha armazenada somente como hash Argon2;
-- JWT assinado, com expiração configurável.
+- listagem paginada de tarefas em `GET /tasks/`;
+- filtros por status e participação (`all`, `requested` e `assigned`);
+- ordenação das tarefas mais recentes primeiro;
+- listagem paginada de notificações em `GET /tasks/notifications/me`;
+- filtro `unread_only` para notificações não lidas;
+- marcação individual em `PATCH /tasks/notifications/{notification_id}/read`;
+- marcação em massa em `PATCH /tasks/notifications/read-all`;
+- isolamento de notificações pelo usuário autenticado;
+- respostas paginadas com `items`, `total`, `limit` e `offset`;
+- suíte ampliada para 15 testes automatizados.
+
+## Contratos de consulta
+
+### Tarefas
+
+`GET /tasks/` aceita:
+
+- `status`: `ASSIGNED`, `IN_PROGRESS`, `IN_REVIEW`, `CHANGES_REQUESTED` ou `APPROVED`;
+- `role`: `all`, `requested` ou `assigned`;
+- `limit`: entre 1 e 100, padrão 20;
+- `offset`: inteiro não negativo, padrão 0.
+
+A resposta segue:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+### Notificações
+
+`GET /tasks/notifications/me` aceita:
+
+- `unread_only`: padrão `false`;
+- `limit`: entre 1 e 100, padrão 20;
+- `offset`: inteiro não negativo, padrão 0.
+
+Somente o destinatário pode listar ou marcar uma notificação como lida. A tentativa de acessar uma notificação de outro usuário retorna `404`, evitando revelar sua existência.
 
 ## Fluxo da tarefa
 
@@ -58,14 +89,15 @@ IN_REVIEW
 3. Somente destinatários podem iniciar e entregar uma tarefa.
 4. Somente o solicitante pode aprovar ou pedir ajustes.
 5. Somente participantes podem consultar a tarefa e seu histórico.
-6. Cada usuário consulta somente as próprias notificações.
+6. Cada usuário consulta e altera somente as próprias notificações.
 7. Token ausente, inválido ou expirado retorna `401`.
 8. Usuário autenticado sem permissão retorna `403`.
 9. Toda transição válida continua gerando histórico e notificações na mesma transação.
+10. Filtros e paginação são aplicados depois do isolamento por participante.
 
-## Migração de dados
+## Banco de dados
 
-A migration `20260802_0002` adiciona `password_hash` aos usuários. Usuários criados na v0.2 recebem o valor `!unusable!`, preservando os registros, mas não conseguem autenticar. Como o projeto está em desenvolvimento, recomenda-se recriar esses usuários com senha após a migration ou limpar o volume de testes.
+A v0.4 não exige nova migration. O campo `notifications.is_read` já existe desde a migration inicial.
 
 ## Variáveis de ambiente
 
@@ -89,12 +121,12 @@ uv run fastapi dev app/main.py
 uv run python -m unittest discover -s tests -v
 ```
 
-Validação da entrega: 11 testes automatizados aprovados; migration validada com `upgrade head` e `downgrade base`.
+Meta da entrega: 15 testes automatizados, incluindo paginação, filtros, ciclo de leitura de notificações e isolamento entre usuários.
 
 ## Próximas entregas recomendadas
 
 - refresh token e revogação de sessão;
 - redefinição segura de senha;
 - organizações/workspaces para isolamento entre empresas;
-- marcação de notificações como lidas;
-- paginação e filtros de tarefas.
+- busca textual de tarefas;
+- prioridades, prazos e responsáveis principais.

@@ -1,20 +1,32 @@
 from sqlalchemy.orm import Session
 
-from app.core.enums import NotificationType, TaskEventType, TaskStatus
+from app.core.enums import (
+    NotificationType,
+    TaskEventType,
+    TaskRoleFilter,
+    TaskStatus,
+)
 from app.models.task import Task
 from app.models.user import User
 from app.repositories.task_repository import TaskRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.task_schema import (
+    NotificationPage,
+    NotificationReadAllResponse,
     NotificationResponse,
     TaskCreate,
     TaskHistoryEntry,
+    TaskPage,
     TaskResponse,
 )
 from app.services.user_service import UserNotFoundError
 
 
 class TaskNotFoundError(LookupError):
+    pass
+
+
+class NotificationNotFoundError(LookupError):
     pass
 
 
@@ -56,11 +68,28 @@ class TaskService:
         self.session.commit()
         return self._to_response(task)
 
-    def list_tasks(self, user_id: int) -> list[TaskResponse]:
-        return [
-            self._to_response(task)
-            for task in self.tasks.list_for_user(user_id)
-        ]
+    def list_tasks(
+        self,
+        user_id: int,
+        *,
+        status_filter: TaskStatus | None,
+        role: TaskRoleFilter,
+        limit: int,
+        offset: int,
+    ) -> TaskPage:
+        tasks, total = self.tasks.list_for_user(
+            user_id,
+            status_filter=status_filter,
+            role=role,
+            limit=limit,
+            offset=offset,
+        )
+        return TaskPage(
+            items=[self._to_response(task) for task in tasks],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
 
     def get_task(self, task_id: int, actor_id: int) -> TaskResponse:
         task = self._get_task(task_id)
@@ -170,11 +199,54 @@ class TaskService:
             for event in self.tasks.list_history(task_id)
         ]
 
-    def list_notifications(self, user_id: int) -> list[NotificationResponse]:
-        return [
-            NotificationResponse.model_validate(notification)
-            for notification in self.tasks.list_notifications(user_id)
-        ]
+    def list_notifications(
+        self,
+        user_id: int,
+        *,
+        unread_only: bool,
+        limit: int,
+        offset: int,
+    ) -> NotificationPage:
+        notifications, total = self.tasks.list_notifications(
+            user_id,
+            unread_only=unread_only,
+            limit=limit,
+            offset=offset,
+        )
+        return NotificationPage(
+            items=[
+                NotificationResponse.model_validate(notification)
+                for notification in notifications
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+    def mark_notification_read(
+        self,
+        notification_id: int,
+        user_id: int,
+    ) -> NotificationResponse:
+        notification = self.tasks.get_notification_for_user(
+            notification_id,
+            user_id,
+        )
+        if notification is None:
+            raise NotificationNotFoundError(
+                f"Notificação {notification_id} não encontrada."
+            )
+        self.tasks.mark_notification_read(notification)
+        self.session.commit()
+        return NotificationResponse.model_validate(notification)
+
+    def mark_all_notifications_read(
+        self,
+        user_id: int,
+    ) -> NotificationReadAllResponse:
+        updated_count = self.tasks.mark_all_notifications_read(user_id)
+        self.session.commit()
+        return NotificationReadAllResponse(updated_count=updated_count)
 
     def _get_user(self, user_id: int) -> User:
         user = self.users.get(user_id)

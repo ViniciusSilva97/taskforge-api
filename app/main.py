@@ -6,8 +6,11 @@ from app.api.routers.user_router import router as user_router
 
 app = FastAPI(
     title="TaskForge API",
-    version="0.3.0",
-    description="API de tarefas com autenticação JWT, workflow e persistência.",
+    version="0.4.0",
+    description=(
+        "API de tarefas com autenticação JWT, consultas paginadas, "
+        "workflow e persistência."
+    ),
 )
 
 app.include_router(auth_router)
